@@ -1,0 +1,65 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+bin/
+include/
+lib/
+lib64/
+
+# Editors and IDEs
+.idea/  # JetBrains IDEs (e.g., PyCharm)
+.vscode/ # Visual Studio Code
+*.swp # Vim swap files
+
+# Distribution / packaging
+build/
+dist/
+sdist/
+develop-eggs/
+parts/
+var/
+wheels/
+*.egg
+*.whl
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*,cover
+
+# Environment variables and other sensitive files
+.env
+.flaskenv
+secrets.toml # Streamlit secrets
+
+# Django stuff (if applicable)
+*.log
+local_settings.py
+db.sqlite3
+media/ # User-uploaded files (optional, depends on project setup)
+migrations/ # Note: Generally, migration files SHOULD be tracked, but if you want to ignore them for some reason, you can add this line
+
+# Sphinx documentation (if applicable)
+docs/_build/
+
+# Ruff cache
+.ruff_cache/

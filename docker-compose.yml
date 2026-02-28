@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  manager:
+    build: ./manager
+    container_name: manager
+    ports:
+      - "8080:8080"
+    depends_on:
+      - worker
+    networks:
+      - crackhash_net
+
+  worker:
+    build: ./worker
+    networks:
+      - crackhash_net
+
+networks:
+  crackhash_net:
+    driver: bridge
