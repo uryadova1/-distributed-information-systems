@@ -3,11 +3,10 @@ version: "3.9"
 services:
   manager:
     build: ./manager
-    container_name: manager
     ports:
       - "8080:8080"
-    depends_on:
-      - worker
+    environment:
+      - WORKER_URLS=http://worker:8000
     networks:
       - crackhash_net
 
