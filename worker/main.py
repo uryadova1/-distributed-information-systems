@@ -1,164 +1,68 @@
-import hashlib
-import time
-import asyncio
-from typing import Set
+import os
+import sys
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
-from pydantic import BaseModel
-import httpx
+from loguru import logger
+
+# ✅ Добавляем shared в PYTHON_PATH
+sys.path.insert(0, '/app/shared')
+
+from shared.models import WorkerTask
+from core.worker import Worker
+
+worker: Worker = None
 
 
-MANAGER_URL  = "http://manager:8080/internal/api/manager/hash/crack/request"
-RETRY_COUNT  = 5
-RETRY_DELAY  = 2   # секунд между попытками
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle для воркера."""
+    global worker
 
-app = FastAPI()
+    manager_url = os.getenv('MANAGER_URL', 'http://manager:8000')
+    worker = Worker(manager_url=manager_url)
+    await worker.__aenter__()
 
+    logger.info("Worker started")
+    yield
 
-class Task(BaseModel):
-    requestId:  str
-    hash:       str
-    partNumber: int
-    partCount:  int
-    algorithm:  str
-    alphabet:   str
-    maxLength:  int
-
-
-class CancelRequest(BaseModel):
-    requestId: str
+    await worker.__aexit__(None, None, None)
+    logger.info("Worker stopped")
 
 
-
-# requestId, которые нужно прервать
-_cancelled: Set[str] = set()
-_cancelled_lock = asyncio.Lock()
-
-
-
-def _estimate_combinations(alphabet_len: int, max_length: int) -> int:
-    return sum(alphabet_len ** i for i in range(1, max_length + 1))
-
-
-def _index_to_word(index: int, alphabet: str, max_length: int) -> str:
-    """Переводит глобальный индекс (по всем длинам) в слово."""
-    base = len(alphabet)
-    for length in range(1, max_length + 1):
-        count = base ** length
-        if index < count:
-            return _number_to_word(index, alphabet, length)
-        index -= count
-    return ""   # не должно случиться при корректном диапазоне
-
-
-def _number_to_word(number: int, alphabet: str, length: int) -> str:
-    base  = len(alphabet)
-    chars = []
-    for _ in range(length):
-        chars.append(alphabet[number % base])
-        number //= base
-    return "".join(reversed(chars))
-
-
-def _hash_word(word: str, algorithm: str) -> str:
-    algo = algorithm.upper()
-    if algo == "MD5":
-        return hashlib.md5(word.encode()).hexdigest()
-    if algo == "SHA1":
-        return hashlib.sha1(word.encode()).hexdigest()
-    if algo == "SHA256":
-        return hashlib.sha256(word.encode()).hexdigest()
-    raise ValueError(f"Unsupported algorithm: {algorithm}")
-
-
-
-def _run_crack(task: Task) -> dict:
-    """
-    Синхронная функция — выполняется в asyncio.to_thread(),
-    чтобы не блокировать event loop.
-    """
-    alphabet   = task.alphabet
-    total      = _estimate_combinations(len(alphabet), task.maxLength)
-    start_idx  = total * task.partNumber  // task.partCount
-    end_idx    = total * (task.partNumber + 1) // task.partCount
-
-    target_hash = task.hash.lower()
-    results     = []
-    checked     = 0
-    start_time  = time.time()
-
-    for i in range(start_idx, end_idx):
-        # проверяем отмену каждые 1000 слов (без lock — читаем set напрямую)
-        if checked % 1000 == 0 and task.requestId in _cancelled:
-            break
-
-        word = _index_to_word(i, alphabet, task.maxLength)
-        if word is None:
-            continue
-
-        checked += 1
-        try:
-            h = _hash_word(word, task.algorithm)
-        except ValueError:
-            break
-
-        if h == target_hash:
-            results.append(word)
-
-    return {
-        "requestId":    task.requestId,
-        "partNumber":   task.partNumber,
-        "results":      results,
-        "checked":      checked,
-        "executionTime": time.time() - start_time,
-    }
-
-
-async def _report_to_manager(payload: dict) -> None:
-    """Отправляет результат менеджеру; повторяет RETRY_COUNT раз при ошибке."""
-    async with httpx.AsyncClient(timeout=10) as client:
-        for attempt in range(RETRY_COUNT):
-            try:
-                r = await client.patch(MANAGER_URL, json=payload)
-                r.raise_for_status()
-                return
-            except Exception as e:
-                if attempt < RETRY_COUNT - 1:
-                    await asyncio.sleep(RETRY_DELAY)
-                # Если все попытки провалились — молча завершаем.
-                # Менеджер-watchdog переназначит задачу.
-
-
-
-
-async def _process_and_report(task: Task) -> None:
-    """Запускает вычисление в потоке и отправляет результат менеджеру."""
-    payload = await asyncio.to_thread(_run_crack, task)
-    await _report_to_manager(payload)
-
-
-
-@app.post("/internal/api/worker/hash/crack/task")
-async def receive_task(task: Task, background_tasks: BackgroundTasks):
-    """
-    Принимает задачу от менеджера.
-    Возвращает 202 немедленно; вычисление идёт в фоне.
-    """
-    # Убираем из отменённых (воркер может получить ту же задачу повторно)
-    _cancelled.discard(task.requestId)
-
-    background_tasks.add_task(_process_and_report, task)
-    return {"status": "ACCEPTED"}
-
-
-@app.post("/internal/api/worker/hash/crack/cancel")
-async def cancel_task(body: CancelRequest):
-    """Менеджер сообщает, что запрос отменён — прерываем вычисление."""
-    async with _cancelled_lock:
-        _cancelled.add(body.requestId)
-    return {"status": "CANCELLED"}
+app = FastAPI(
+    title="CrackHash Worker",
+    description="Distributed hash cracking system - Worker node",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 
 @app.get("/health")
-def health():
-    """Health-check для docker-compose и менеджера."""
-    return {"status": "ok"}
+async def health_check():
+    return {"status": "healthy"}
+
+
+@app.post("/internal/api/worker/hash/crack/task")
+async def receive_task(task: WorkerTask, background_tasks: BackgroundTasks):
+    """Получение задачи от менеджера."""
+    # Запускаем выполнение в фоне, не блокируя ответ
+    background_tasks.add_task(worker.execute_task, task)
+    return {"status": "accepted", "partNumber": task.partNumber}
+
+
+@app.delete("/internal/api/worker/hash/crack/task/{request_id}")
+async def cancel_task(request_id: str):
+    """Отмена задачи (опционально)."""
+    worker.cancel_task(request_id)
+    return {"status": "cancellation_requested"}
+
+
+@app.on_event("startup")
+def setup_logging():
+    logger.add("logs/worker.log", rotation="10 MB", level="INFO")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)

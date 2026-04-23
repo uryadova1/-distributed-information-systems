@@ -1,20 +1,46 @@
-version: "3.9"
-
+# docker-compose.yml
 services:
-  manager:
-    build: ./manager
+  nginx:
+    image: nginx:alpine
     ports:
-      - "8080:8080"
-    environment:
-      - WORKER_URLS=http://worker:8000
+      - "8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - manager
     networks:
-      - crackhash_net
+      - crackhash-net
+    restart: unless-stopped
+
+  manager:
+    build: ./manager           # ← build context = ./manager
+    environment:
+      - WORKER_CALLBACK_URL=http://manager:8000
+      - TASK_TIMEOUT=5
+      - MAX_RETRIES=3
+    networks:
+      - crackhash-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
 
   worker:
-    build: ./worker
+    build: ./worker            # ← build context = ./worker
+    deploy:
+      replicas: ${WORKERS_COUNT:-4}
+    environment:
+      - MANAGER_URL=http://manager:8000
+      - WORKER_ID=${WORKER_ID:-auto}
     networks:
-      - crackhash_net
+      - crackhash-net
+    depends_on:
+      manager:
+        condition: service_healthy
+    restart: unless-stopped
 
 networks:
-  crackhash_net:
+  crackhash-net:
     driver: bridge
