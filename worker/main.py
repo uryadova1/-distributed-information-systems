@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
 from loguru import logger
 
-# ✅ Добавляем shared в PYTHON_PATH
-sys.path.insert(0, '/app/shared')
+sys.path.insert(0, '/app')
+# sys.path.insert(0, '/app/shared')
 
 from shared.models import WorkerTask
 from core.worker import Worker

@@ -1,7 +1,10 @@
 import asyncio
+import sys
+
 import httpx
 from loguru import logger
-
+sys.path.insert(0, '/app')
+# from schemas import WorkerTask, WorkerResult
 from models.schemas import WorkerTask, WorkerResult
 from core.hash_cracker import crack_part
 

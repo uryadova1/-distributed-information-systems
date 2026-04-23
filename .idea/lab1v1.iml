@@ -11,6 +11,7 @@
     <option name="namespacePackageFolders">
       <list>
         <option value="$MODULE_DIR$/manager" />
+        <option value="$MODULE_DIR$/worker" />
       </list>
     </option>
   </component>
