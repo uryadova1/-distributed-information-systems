@@ -44,7 +44,6 @@ async def health_check():
 
 @app.post("/internal/api/worker/hash/crack/task")
 async def receive_task(task: WorkerTask, background_tasks: BackgroundTasks):
-    """Получение задачи от менеджера."""
     # Запускаем выполнение в фоне, не блокируя ответ
     background_tasks.add_task(worker.execute_task, task)
     return {"status": "accepted", "partNumber": task.partNumber}
@@ -52,7 +51,6 @@ async def receive_task(task: WorkerTask, background_tasks: BackgroundTasks):
 
 @app.delete("/internal/api/worker/hash/crack/task/{request_id}")
 async def cancel_task(request_id: str):
-    """Отмена задачи (опционально)."""
     worker.cancel_task(request_id)
     return {"status": "cancellation_requested"}
 

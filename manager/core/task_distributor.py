@@ -1,7 +1,7 @@
 import asyncio
 import time
 import httpx
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Callable
 from loguru import logger
 
 from models.schemas import WorkerTask, WorkerResult, TaskStatus
@@ -22,6 +22,8 @@ class TaskDistributor:
         self.available_workers: Set[str] = set(worker_urls)
         self.assigned_tasks: Dict[str, Dict] = {}  # requestId: {partNumber: worker_url}
         self._client: Optional[httpx.AsyncClient] = None
+        self._on_result_callback: Optional[Callable] = None
+        self._on_error_callback: Optional[Callable] = None
 
     async def __aenter__(self):
         self._client = httpx.AsyncClient(timeout=self.timeout)
@@ -51,6 +53,9 @@ class TaskDistributor:
         """Распределение задачи на части и назначение воркерам."""
         from core.hash_cracker import count_combinations
 
+        self._on_result_callback = on_result_callback
+        self._on_error_callback = on_error_callback
+
         alphabet = task_data['alphabet']
         max_length = task_data['maxLength']
         part_count = self._calculate_parts(max_length, alphabet)
@@ -66,7 +71,6 @@ class TaskDistributor:
             'start_time': time.time()
         }
 
-        # Назначаем части воркерам
         for part_number in range(part_count):
             worker_url = self._select_worker()
             if not worker_url:
@@ -83,7 +87,6 @@ class TaskDistributor:
                 maxLength=max_length
             )
 
-            # Асинхронный запуск без ожидания
             asyncio.create_task(
                 self._send_to_worker(
                     worker_url, worker_task, request_id, part_number,
@@ -142,20 +145,59 @@ class TaskDistributor:
             return
 
         task_info['completed'].add(result.partNumber)
-        task_info['results'].extend(result.found)
+        if result.found:
+            task_info['results'].extend(result.found)
 
         # Проверка завершения всех частей
         if len(task_info['completed']) >= task_info['partCount']:
             execution_time = time.time() - task_info['start_time']
-            total_checked = sum(r.checked for r in [result] if r.requestId == result.requestId)
-            # Здесь должна быть агрегация всех результатов
-            await self._finalize_request(result.requestId, task_info['results'], execution_time)
 
-    async def _finalize_request(self, request_id: str, results: List[str], execution_time: float):
-        """Завершение обработки запроса."""
-        logger.info(f"Request {request_id} completed in {execution_time:.2f}s")
-        # Уведомление менеджера о завершении
-        # (реализуется через callback или shared state)
+            # ✅ Соберите ошибки, если они есть (нужно хранить их в task_info)
+            errors = task_info.get('errors', [])
+
+            await self._finalize_request(
+                result.requestId,
+                task_info['results'],
+                execution_time,
+                errors if errors else None
+            )
+
+    async def _finalize_request(
+            self,
+            request_id: str,
+            results: List[str],
+            execution_time: float,
+            errors: Optional[List[str]] = None
+    ):
+        task_info = self.assigned_tasks.get(request_id)
+        if not task_info:
+            logger.warning(f"⚠️ Cannot finalize unknown request: {request_id}")
+            return
+
+        # Определяем финальный статус
+        if errors:
+            status = TaskStatus.ERROR
+            error_message = f"Failed parts: {len(errors)}; Details: {'; '.join(errors[:3])}"
+            logger.error(f"Request {request_id} completed with errors: {error_message}")
+        elif results:
+            status = TaskStatus.READY
+            logger.info(f"Request {request_id} COMPLETED: found {len(results)} match(es) in {execution_time:.2f}s")
+        else:
+            # Хэш не найден в заданном пространстве перебора
+            status = TaskStatus.READY
+            logger.info(f"Request {request_id} COMPLETED: no matches found in {execution_time:.2f}s")
+
+        # 🔑 КЛЮЧЕВОЙ МОМЕНТ: вызываем callback менеджера для обновления состояния
+        # Этот callback передаётся при вызове distribute_task()
+        if status == TaskStatus.READY:
+            await self._on_result_callback(request_id, results, execution_time)
+        else:
+            await self._on_error_callback(request_id, error_message)
+
+        # Очистка памяти
+        if request_id in self.assigned_tasks:
+            del self.assigned_tasks[request_id]
+            logger.debug(f"Cleaned up task info for {request_id}")
 
     def cancel_request(self, request_id: str):
         """Отмена запроса и уведомление воркеров."""

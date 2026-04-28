@@ -35,6 +35,9 @@ class CrackRequest(BaseModel):
 class CrackResponse(BaseModel):
     requestId: str
     estimatedCombinations: int
+    data: Optional[List[str]] = None
+    error: Optional[str] = None
+    status: Optional[TaskStatus] = None
 
 
 class StatusResponse(BaseModel):

@@ -106,18 +106,20 @@ class Manager:
 
     async def crack_hash(self, request: CrackRequest) -> CrackResponse:
         """Обработка запроса на взлом хэша."""
-        # Проверка идемпотентности
         existing_id = self.store.find_existing(request)
+        logger.info(f"existing_id {existing_id}")
         if existing_id:
+            logger.info(f"ыыы {existing_id}")
             existing = self.store.get(existing_id)
             if existing['status'] == TaskStatus.READY:
-                # Уже готово - возвращаем результат
                 return CrackResponse(
                     requestId=existing_id,
-                    estimatedCombinations=existing['estimated']
+                    estimatedCombinations=existing['estimated'],
+                    data=existing['results'],
+                    status=TaskStatus.READY
                 )
             elif existing['status'] == TaskStatus.IN_PROGRESS:
-                # В процессе - возвращаем ID
+
                 return CrackResponse(
                     requestId=existing_id,
                     estimatedCombinations=existing['estimated']
@@ -133,14 +135,39 @@ class Manager:
             'algorithm': request.algorithm.value,
             'alphabet': request.alphabet
         }
-
         await self.distributor.distribute_task(
-            request_id, task_data,
-            on_result_callback=self._on_part_complete,
-            on_error_callback=self._on_part_error
+            request_id=request_id,
+            task_data=task_data,
+            on_result_callback=self._on_task_completed,
+            on_error_callback=self._on_task_failed
         )
-
         return CrackResponse(requestId=request_id, estimatedCombinations=estimated)
+
+    async def _on_task_completed(self, request_id: str, results: List[str], execution_time: float):
+        """Вызывается TaskDistributor при успешном завершении всех частей."""
+        # Обновляем статус в хранилище
+        self.store.update_status(
+            request_id,
+            TaskStatus.READY,
+            results=results if results else None  # None если хэш не найден
+        )
+        # Сохраняем время выполнения для метрик
+        if request_id in self.store._requests:
+            self.store._requests[request_id]['execution_time'] = execution_time
+        logger.info(f"Request {request_id} marked as READY")
+
+    async def _on_task_failed(self, request_id: str, error: str):
+        """Вызывается TaskDistributor при ошибке выполнения."""
+        self.store.update_status(request_id, TaskStatus.ERROR, error=error)
+        logger.error(f"Request {request_id} marked as ERROR: {error}")
+
+        # await self.distributor.distribute_task(
+        #     request_id, task_data,
+        #     on_result_callback=self._on_part_complete,
+        #     on_error_callback=self._on_part_error
+        # )
+        #
+        # return CrackResponse(requestId=request_id, estimatedCombinations=estimated)
 
     def get_status(self, request_id: str) -> StatusResponse:
         """Получение статуса запроса."""

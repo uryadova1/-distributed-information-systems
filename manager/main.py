@@ -15,10 +15,8 @@ manager: Manager = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle manager для инициализации/очистки."""
     global manager
 
-    # Получение списка воркеров из переменных окружения
     worker_urls = os.getenv('WORKER_URLS', 'http://worker:8000').split(',')
     task_timeout = float(os.getenv('TASK_TIMEOUT', '5'))
 
@@ -42,13 +40,11 @@ app = FastAPI(
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
     return {"status": "healthy"}
 
 
 @app.post("/api/hash/crack", response_model=CrackResponse)
 async def crack_hash(request: CrackRequest):
-    """Запрос на взлом хэша."""
     try:
         return await manager.crack_hash(request)
     except Exception as e:
@@ -58,13 +54,11 @@ async def crack_hash(request: CrackRequest):
 
 @app.get("/api/hash/status", response_model=StatusResponse)
 async def get_status(requestId: str):
-    """Получение статуса запроса."""
     return manager.get_status(requestId)
 
 
 @app.delete("/api/hash/crack")
 async def cancel_crack(requestId: str):
-    """Отмена запроса на взлом."""
     if manager.cancel_request(requestId):
         return {"message": "Request cancelled"}
     raise HTTPException(status_code=404, detail="Request not found")
@@ -72,17 +66,15 @@ async def cancel_crack(requestId: str):
 
 @app.get("/api/metrics", response_model=MetricsResponse)
 async def get_metrics():
-    """Получение метрик системы."""
+
     return manager.get_metrics()
 
 
-# Internal API для воркеров
+
 @app.patch("/internal/api/manager/hash/crack/request")
 async def worker_result(result: WorkerResult):
-    """Приём результатов от воркера."""
-    # Обработка результата (упрощённо)
+
     if result.found:
-        # Если найдено совпадение - завершаем запрос
         manager.store.update_status(
             result.requestId,
             TaskStatus.READY,

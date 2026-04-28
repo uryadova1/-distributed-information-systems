@@ -1,4 +1,3 @@
-# docker-compose.yml
 services:
   nginx:
     image: nginx:alpine
@@ -13,7 +12,7 @@ services:
     restart: unless-stopped
 
   manager:
-    build: ./manager           # ← build context = ./manager
+    build: ./manager
     environment:
       - WORKER_CALLBACK_URL=http://manager:8000
       - TASK_TIMEOUT=5
